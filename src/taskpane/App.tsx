@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 
 type Tab = "chat" | "settings";
@@ -24,7 +25,7 @@ export function App() {
       </header>
       <main className="app-content">
         {activeTab === "chat" ? (
-          <div>Chat panel placeholder</div>
+          <ChatPanel onSend={async (msg) => `Echo: ${msg}`} />
         ) : (
           <SettingsPanel />
         )}
