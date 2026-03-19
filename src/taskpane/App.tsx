@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 type Tab = "chat" | "settings";
 
@@ -25,7 +26,7 @@ export function App() {
         {activeTab === "chat" ? (
           <div>Chat panel placeholder</div>
         ) : (
-          <div>Settings panel placeholder</div>
+          <SettingsPanel />
         )}
       </main>
     </div>
