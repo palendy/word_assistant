@@ -13,6 +13,7 @@ export function SettingsPanel() {
 
   return (
     <div className="settings-panel">
+      <div className="settings-title">Configuration</div>
       <div className="setting-group">
         <label className="setting-label">AI Server URL</label>
         <input
@@ -21,6 +22,16 @@ export function SettingsPanel() {
           value={settings.apiUrl}
           onChange={(e) => setSettings({ ...settings, apiUrl: e.target.value })}
           placeholder="http://localhost:11434/v1/chat/completions"
+        />
+      </div>
+      <div className="setting-group">
+        <label className="setting-label">API Key</label>
+        <input
+          className="setting-input"
+          type="password"
+          value={settings.apiKey}
+          onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+          placeholder="Optional — leave empty if not required"
         />
       </div>
       <div className="setting-group">
@@ -33,7 +44,10 @@ export function SettingsPanel() {
           placeholder="llama3"
         />
       </div>
-      <button className="save-btn" onClick={handleSave}>
+      <button
+        className={`save-btn ${saved ? "saved" : ""}`}
+        onClick={handleSave}
+      >
         {saved ? "Saved!" : "Save Settings"}
       </button>
     </div>

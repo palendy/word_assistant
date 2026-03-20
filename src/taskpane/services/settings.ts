@@ -1,5 +1,6 @@
 export interface Settings {
   apiUrl: string;
+  apiKey: string;
   modelName: string;
 }
 
@@ -7,6 +8,7 @@ const STORAGE_KEY = "word-ai-assistant-settings";
 
 const DEFAULT_SETTINGS: Settings = {
   apiUrl: "http://localhost:11434/v1/chat/completions",
+  apiKey: "",
   modelName: "llama3",
 };
 

@@ -1,17 +1,41 @@
 export async function readDocumentStructure(): Promise<string> {
   return Word.run(async (context) => {
     const body = context.document.body;
-    body.load("text");
+
+    // Load paragraphs with style info
+    const paragraphs = body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const para of paragraphs.items) {
+      para.load("text");
+      para.load("style");
+      para.load("alignment");
+    }
 
     const tables = body.tables;
     tables.load("items");
-
     await context.sync();
 
     const parts: string[] = [];
-    parts.push("=== DOCUMENT TEXT ===");
-    parts.push(body.text);
+    parts.push("=== DOCUMENT STRUCTURE ===");
+    parts.push(`Total paragraphs: ${paragraphs.items.length}`);
+    parts.push(`Total tables: ${tables.items.length}`);
+    parts.push("");
 
+    // Paragraph details with styles
+    parts.push("=== PARAGRAPHS ===");
+    for (let i = 0; i < paragraphs.items.length; i++) {
+      const p = paragraphs.items[i];
+      const text = p.text.trim();
+      if (!text) {
+        parts.push(`[P${i}] (empty) | style: ${p.style}`);
+      } else {
+        parts.push(`[P${i}] "${text}" | style: ${p.style} | align: ${p.alignment}`);
+      }
+    }
+
+    // Table details with headers and cell values
     if (tables.items.length > 0) {
       for (let i = 0; i < tables.items.length; i++) {
         const table = tables.items[i];
@@ -22,10 +46,13 @@ export async function readDocumentStructure(): Promise<string> {
 
       for (let i = 0; i < tables.items.length; i++) {
         const table = tables.items[i];
-        parts.push(`\n=== TABLE ${i + 1} ===`);
         const values = table.values;
+        parts.push("");
+        parts.push(`=== TABLE ${i + 1} (${values.length} rows x ${values[0]?.length || 0} cols) ===`);
         for (let r = 0; r < values.length; r++) {
-          parts.push(values[r].join(" | "));
+          const label = r === 0 ? "HEADER" : `ROW ${r}`;
+          const cells = values[r].map((cell, c) => `[R${r}C${c}]${cell || "(empty)"}`).join(" | ");
+          parts.push(`  ${label}: ${cells}`);
         }
       }
     }
@@ -34,35 +61,35 @@ export async function readDocumentStructure(): Promise<string> {
   });
 }
 
-export async function applyAIResponse(response: string): Promise<void> {
+export async function applyAIResponse(response: string): Promise<boolean> {
+  // Extract JSON block from AI response
+  const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/);
+  if (!jsonMatch) {
+    return false; // No document modifications, just conversation
+  }
+
   return Word.run(async (context) => {
     const body = context.document.body;
     const tables = body.tables;
     tables.load("items");
     await context.sync();
 
-    // Try to parse structured JSON response
-    const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-      const instructions = JSON.parse(jsonMatch[1]);
-      await applyInstructions(context, instructions, tables);
-    } else {
-      // Fallback: insert response as text at end of document
-      body.insertParagraph(response, Word.InsertLocation.end);
-    }
-
+    const instructions: WriteInstruction[] = JSON.parse(jsonMatch[1]);
+    await applyInstructions(context, instructions, tables);
     await context.sync();
+    return true;
   });
 }
 
 interface WriteInstruction {
-  type: "table_cell" | "paragraph" | "replace";
+  type: "table_cell" | "paragraph" | "replace" | "insert_after_paragraph";
   tableIndex?: number;
   row?: number;
   col?: number;
   paragraphIndex?: number;
   searchText?: string;
   value: string;
+  style?: string;
 }
 
 async function applyInstructions(
@@ -86,9 +113,27 @@ async function applyInstructions(
       if (results.items.length > 0) {
         results.items[0].insertText(inst.value, Word.InsertLocation.replace);
       }
+    } else if (inst.type === "insert_after_paragraph" && inst.paragraphIndex !== undefined) {
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load("items");
+      await context.sync();
+      if (inst.paragraphIndex < paragraphs.items.length) {
+        const newPara = paragraphs.items[inst.paragraphIndex].insertParagraph(
+          inst.value,
+          Word.InsertLocation.after
+        );
+        if (inst.style) {
+          newPara.style = inst.style;
+        }
+      }
     } else if (inst.type === "paragraph") {
-      const body = context.document.body;
-      body.insertParagraph(inst.value, Word.InsertLocation.end);
+      const newPara = context.document.body.insertParagraph(
+        inst.value,
+        Word.InsertLocation.end
+      );
+      if (inst.style) {
+        newPara.style = inst.style;
+      }
     }
   }
 }

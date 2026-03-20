@@ -18,7 +18,10 @@ export async function sendChatRequest(
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
-  const { apiUrl, modelName } = loadSettings();
+  const settings = loadSettings();
+  const apiUrl = settings.apiUrl.trim();
+  const apiKey = settings.apiKey.trim();
+  const modelName = settings.modelName.trim();
 
   if (!apiUrl) {
     throw new Error("AI Server URL is not configured. Go to Settings tab.");
@@ -29,9 +32,16 @@ export async function sendChatRequest(
     { role: "user", content: userMessage },
   ];
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
   const response = await fetch(apiUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       model: modelName,
       messages,

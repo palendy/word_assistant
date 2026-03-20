@@ -36,6 +36,9 @@ module.exports = {
     port: 3000,
     server: "https",
     headers: { "Access-Control-Allow-Origin": "*" },
+    client: {
+      overlay: false,
+    },
   },
   devtool: "source-map",
 };

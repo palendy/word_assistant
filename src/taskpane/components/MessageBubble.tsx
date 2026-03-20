@@ -8,7 +8,9 @@ export interface Message {
 export function MessageBubble({ role, content }: Message) {
   return (
     <div className={`message ${role}`}>
-      <div className="message-role">{role === "user" ? "You" : "AI"}</div>
+      <div className="message-role">
+        {role === "user" ? "You" : "AI Assistant"}
+      </div>
       <div className="message-content">{content}</div>
     </div>
   );
