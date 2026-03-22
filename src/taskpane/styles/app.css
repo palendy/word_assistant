@@ -355,3 +355,69 @@ body {
 .save-btn.saved {
   background: #16A34A;
 }
+
+/* Welcome hint */
+.welcome-hint {
+  font-size: 12px;
+  color: #B8ADA3;
+  margin-top: 4px;
+}
+
+.hint-slash {
+  display: inline-block;
+  background: #E8E0D8;
+  color: #5A4F46;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* Command Palette */
+.command-palette {
+  background: #FFFFFF;
+  border: 1px solid #E8E0D8;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: slideUp 0.15s ease;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.command-item:not(:last-child) {
+  border-bottom: 1px solid #F0EBE5;
+}
+
+.command-item:hover,
+.command-item.selected {
+  background: #FEF3C7;
+}
+
+.command-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #D97706;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.command-desc {
+  font-size: 12px;
+  color: #8B7E74;
+  flex: 1;
+}

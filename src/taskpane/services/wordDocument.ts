@@ -99,8 +99,13 @@ async function applyInstructions(
 ): Promise<void> {
   for (const inst of instructions) {
     if (inst.type === "table_cell" && inst.tableIndex !== undefined) {
+      if (inst.tableIndex >= tables.items.length) continue;
       const table = tables.items[inst.tableIndex];
-      const cell = table.getCell(inst.row!, inst.col!);
+      if (inst.row === undefined || inst.col === undefined) continue;
+      table.load("rowCount");
+      await context.sync();
+      if (inst.row >= table.rowCount) continue;
+      const cell = table.getCell(inst.row, inst.col);
       cell.body.clear();
       cell.body.insertText(inst.value, Word.InsertLocation.start);
     } else if (inst.type === "replace" && inst.searchText) {
