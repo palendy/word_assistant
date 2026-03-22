@@ -1,22 +1,13 @@
 import { loadSettings } from "./settings";
 
-interface ChatMessage {
+export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-interface ChatCompletionResponse {
-  choices: Array<{
-    message: {
-      role: string;
-      content: string;
-    };
-  }>;
-}
-
-export async function sendChatRequest(
-  systemPrompt: string,
-  userMessage: string
+export async function sendChatStreamRequest(
+  messages: ChatMessage[],
+  onToken: (token: string) => void
 ): Promise<string> {
   const settings = loadSettings();
   const apiUrl = settings.apiUrl.trim();
@@ -26,11 +17,6 @@ export async function sendChatRequest(
   if (!apiUrl) {
     throw new Error("AI Server URL is not configured. Go to Settings tab.");
   }
-
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userMessage },
-  ];
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -46,6 +32,7 @@ export async function sendChatRequest(
       model: modelName,
       messages,
       temperature: 0.3,
+      stream: true,
     }),
   });
 
@@ -54,11 +41,40 @@ export async function sendChatRequest(
     throw new Error(`API error (${response.status}): ${errorText}`);
   }
 
-  const data: ChatCompletionResponse = await response.json();
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response stream");
 
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error("No response from AI model");
+  const decoder = new TextDecoder();
+  let fullContent = "";
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+      const data = trimmed.slice(6);
+      if (data === "[DONE]") break;
+
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) {
+          fullContent += delta;
+          onToken(delta);
+        }
+      } catch {
+        // skip malformed JSON chunks
+      }
+    }
   }
 
-  return data.choices[0].message.content;
+  return fullContent;
 }

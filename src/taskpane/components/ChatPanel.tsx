@@ -1,18 +1,25 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Message, MessageBubble } from "./MessageBubble";
 
 interface Command {
   name: string;
   description: string;
-  action: () => string | null; // returns system message or null
+  action: () => string | null;
 }
 
 interface ChatPanelProps {
-  onSend: (userMessage: string) => Promise<string>;
+  onSend: (
+    userMessage: string,
+    onToken: (token: string) => void,
+    onDone: (fullResponse: string) => void,
+    onError: (error: Error) => void
+  ) => void;
+  onClear: () => void;
 }
 
-export function ChatPanel({ onSend }: ChatPanelProps) {
+export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [streamingContent, setStreamingContent] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
@@ -27,6 +34,8 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
       description: "Clear all chat history",
       action: () => {
         setMessages([]);
+        setStreamingContent("");
+        onClear();
         return null;
       },
     },
@@ -48,7 +57,7 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, streamingContent, loading]);
 
   useEffect(() => {
     setSelectedCommandIndex(0);
@@ -74,15 +83,48 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
     autoResize();
   };
 
+  const sendMessage = useCallback(
+    (text: string) => {
+      setLoading(true);
+      setStreamingContent("");
+
+      onSend(
+        text,
+        // onToken
+        (token) => {
+          setStreamingContent((prev) => prev + token);
+        },
+        // onDone
+        (fullResponse) => {
+          setStreamingContent("");
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: fullResponse },
+          ]);
+          setLoading(false);
+        },
+        // onError
+        (error) => {
+          setStreamingContent("");
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `Error: ${error.message}` },
+          ]);
+          setLoading(false);
+        }
+      );
+    },
+    [onSend]
+  );
+
   const executeCommand = (cmd: Command) => {
     setShowCommands(false);
     setInput("");
     setCommandFilter("");
 
     const result = cmd.action();
-    if (result === null) return; // command handled internally (e.g., /clear)
+    if (result === null) return;
 
-    // Map command tokens to AI messages
     const commandMessages: Record<string, string> = {
       "__CMD_SUMMARY__":
         "Read the current document and provide a concise summary of its content.",
@@ -105,28 +147,14 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
       return;
     }
 
-    // Show command as user message and send to AI
     setMessages((prev) => [...prev, { role: "user", content: cmd.name }]);
-    setLoading(true);
-
-    onSend(aiMessage)
-      .then((reply) => {
-        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-      })
-      .catch((err: any) => {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `Error: ${err.message}` },
-        ]);
-      })
-      .finally(() => setLoading(false));
+    sendMessage(aiMessage);
   };
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading) return;
 
-    // Check if it's a command
     if (text.startsWith("/")) {
       const cmd = commands.find(
         (c) => c.name.toLowerCase() === text.toLowerCase()
@@ -141,19 +169,7 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
     setShowCommands(false);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setMessages((prev) => [...prev, { role: "user", content: text }]);
-    setLoading(true);
-
-    try {
-      const reply = await onSend(text);
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-    } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Error: ${err.message}` },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+    sendMessage(text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -191,7 +207,7 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
 
   return (
     <div className="chat-panel">
-      {messages.length === 0 && !loading ? (
+      {messages.length === 0 && !loading && !streamingContent ? (
         <div className="welcome">
           <div className="welcome-icon">A</div>
           <div className="welcome-title">AI Assistant</div>
@@ -207,7 +223,16 @@ export function ChatPanel({ onSend }: ChatPanelProps) {
           {messages.map((msg, i) => (
             <MessageBubble key={i} {...msg} />
           ))}
-          {loading && (
+          {streamingContent && (
+            <div className="message assistant">
+              <div className="message-role">AI Assistant</div>
+              <div className="message-content">
+                {streamingContent}
+                <span className="streaming-cursor" />
+              </div>
+            </div>
+          )}
+          {loading && !streamingContent && (
             <div className="loading-indicator">
               <div className="dot" />
               <div className="dot" />

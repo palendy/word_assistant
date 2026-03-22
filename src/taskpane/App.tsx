@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { sendChatRequest } from "./services/aiClient";
+import { ChatMessage, sendChatStreamRequest } from "./services/aiClient";
 import { readDocumentStructure, applyAIResponse } from "./services/wordDocument";
 
 type Tab = "chat" | "settings";
@@ -47,36 +47,78 @@ When you decide to modify the document, include a JSON code block with instructi
 
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
+  const conversationHistory = useRef<ChatMessage[]>([]);
 
-  const handleSend = async (userMessage: string): Promise<string> => {
-    // Read current document structure
-    let docStructure = "";
-    try {
-      docStructure = await readDocumentStructure();
-    } catch {
-      docStructure = "(Could not read document — running outside Word)";
-    }
+  const handleClear = useCallback(() => {
+    conversationHistory.current = [];
+  }, []);
 
-    const fullMessage = `## Current Document Structure:\n${docStructure}\n\n## User Message:\n${userMessage}`;
+  const handleSend = useCallback(
+    (
+      userMessage: string,
+      onToken: (token: string) => void,
+      onDone: (fullResponse: string) => void,
+      onError: (error: Error) => void
+    ) => {
+      (async () => {
+        // Read current document structure
+        let docStructure = "";
+        try {
+          docStructure = await readDocumentStructure();
+        } catch {
+          docStructure = "(Could not read document — running outside Word)";
+        }
 
-    // Send to AI
-    const aiResponse = await sendChatRequest(SYSTEM_PROMPT, fullMessage);
+        // Build message with document context
+        const userContent = `## Current Document Structure:\n${docStructure}\n\n## User Message:\n${userMessage}`;
 
-    // Try to apply document modifications if AI included JSON instructions
-    try {
-      const didModify = await applyAIResponse(aiResponse);
-      if (didModify) {
-        // Remove the JSON block from displayed response
-        const displayResponse = aiResponse.replace(/```json[\s\S]*?```/g, "").trim();
-        return displayResponse + "\n\n✅ Document updated.";
-      }
-    } catch (err: any) {
-      return aiResponse + `\n\n⚠️ Could not apply changes: ${err.message}`;
-    }
+        // Add user message to history
+        conversationHistory.current.push({
+          role: "user",
+          content: userContent,
+        });
 
-    // No document modification — just conversation
-    return aiResponse;
-  };
+        // Build messages array: system + conversation history
+        const messages: ChatMessage[] = [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...conversationHistory.current,
+        ];
+
+        try {
+          const fullResponse = await sendChatStreamRequest(messages, onToken);
+
+          // Add assistant response to history (store clean version without doc structure noise)
+          conversationHistory.current.push({
+            role: "assistant",
+            content: fullResponse,
+          });
+
+          // Try to apply document modifications
+          try {
+            const didModify = await applyAIResponse(fullResponse);
+            if (didModify) {
+              const displayResponse = fullResponse
+                .replace(/```json[\s\S]*?```/g, "")
+                .trim();
+              onDone(displayResponse + "\n\n✅ Document updated.");
+              return;
+            }
+          } catch (err: any) {
+            onDone(
+              fullResponse +
+                `\n\n⚠️ Could not apply changes: ${err.message}`
+            );
+            return;
+          }
+
+          onDone(fullResponse);
+        } catch (err: any) {
+          onError(err);
+        }
+      })();
+    },
+    []
+  );
 
   return (
     <div className="app">
@@ -102,7 +144,7 @@ export function App() {
       </header>
       <main className="app-content">
         {activeTab === "chat" ? (
-          <ChatPanel onSend={handleSend} />
+          <ChatPanel onSend={handleSend} onClear={handleClear} />
         ) : (
           <SettingsPanel />
         )}
