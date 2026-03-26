@@ -437,3 +437,195 @@ body {
   color: #8B7E74;
   flex: 1;
 }
+
+/* Thinking Block */
+.thinking-block {
+  background: #FFF8F0;
+  border: 1px solid #F0E6D8;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  animation: fadeIn 0.2s ease;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #8B7E74;
+}
+
+.thinking-icon {
+  font-size: 14px;
+}
+
+.thinking-label {
+  flex: 1;
+}
+
+.thinking-toggle {
+  font-size: 10px;
+  color: #B8ADA3;
+}
+
+.thinking-content {
+  padding: 0 12px 10px;
+  font-size: 12.5px;
+  color: #6B6560;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  border-top: 1px solid #F0E6D8;
+  padding-top: 8px;
+}
+
+/* Thinking Indicator (streaming & loading) */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #FFF8F0;
+  border: 1px solid #F0E6D8;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #8B7E74;
+  animation: fadeIn 0.2s ease;
+}
+
+.thinking-indicator .thinking-icon {
+  animation: pulse 1.5s infinite;
+}
+
+.thinking-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #F0E6D8;
+  border-top-color: #D97706;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Agent Step Cards */
+.steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+  animation: fadeIn 0.2s ease;
+}
+
+.step-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #FFFFFF;
+  border: 1px solid #E8E0D8;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #5A4F46;
+}
+
+.step-card.step-status-running {
+  border-color: #D97706;
+  background: #FFFBF0;
+}
+
+.step-card.step-status-done {
+  border-color: #86EFAC;
+  background: #F0FDF4;
+}
+
+.step-card.step-status-error {
+  border-color: #FCA5A5;
+  background: #FEF2F2;
+}
+
+.step-icon {
+  font-size: 13px;
+  width: 18px;
+  text-align: center;
+}
+
+.step-status-done .step-icon {
+  color: #16A34A;
+  font-weight: 700;
+}
+
+.step-status-error .step-icon {
+  color: #DC2626;
+  font-weight: 700;
+}
+
+.step-label {
+  flex: 1;
+}
+
+/* Steps Summary (in message) */
+.steps-summary {
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.steps-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #16A34A;
+  font-weight: 500;
+}
+
+.steps-summary-list {
+  border-top: 1px solid #BBF7D0;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.steps-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #5A4F46;
+  font-size: 11.5px;
+}
+
+.step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.step-dot.done {
+  background: #16A34A;
+}
+
+.step-dot.error {
+  background: #DC2626;
+}
+
+.step-dot.running {
+  background: #D97706;
+}

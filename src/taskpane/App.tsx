@@ -1,49 +1,44 @@
 import React, { useState, useRef, useCallback } from "react";
-import { ChatPanel } from "./components/ChatPanel";
+import { ChatPanel, AgentStep } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ChatMessage, sendChatStreamRequest } from "./services/aiClient";
-import { readDocumentStructure, applyAIResponse } from "./services/wordDocument";
+import { TOOL_DEFINITIONS, executeTool, undoLastOperation, clearUndoStack } from "./services/tools";
 
 type Tab = "chat" | "settings";
 
-const SYSTEM_PROMPT = `You are an intelligent Word document writing agent. You can read the current Word document's structure and modify it.
+const MAX_AGENT_LOOPS = 10;
 
-## Your Capabilities
-- You can see the full document structure: paragraphs (with styles, alignment), tables (with cell positions), and their content.
-- You can modify the document by outputting a JSON instruction block.
-- You can have a natural conversation with the user to understand their needs before making changes.
+const SYSTEM_PROMPT = `You are a powerful Word document automation agent. You MUST use tools to modify the document — NEVER output markdown tables, code blocks, or raw text as a substitute.
 
-## How You Work
-1. **Understand the document**: When you receive the document structure, analyze it carefully — identify the template layout, headings, tables, empty cells, placeholder text, etc.
-2. **Understand the user's intent**: If the user provides raw data, figure out where each piece of data should go in the template. If unclear, ask clarifying questions.
-3. **Make intelligent decisions**: Match data to the right locations based on context (e.g., "Revenue" data goes to the Revenue row, quarterly figures go to the right quarter column).
-4. **Respond naturally**: Always respond in natural language explaining what you did or what you plan to do.
+## Tools (8 total)
+| Tool | Use for |
+|------|---------|
+| read_document | Read document structure (ALWAYS call first) |
+| batch_write | Write paragraphs (with styles). Use for all text creation |
+| replace_text | Find and replace text |
+| insert_table | Create new tables |
+| write_table_cells | Edit existing table cells |
+| clear_document | Clear all content |
+| insert_ooxml | Insert complex formatted content (OOXML) |
+| execute_word_js | **Everything else** — formatting, resizing, borders, headers, footers, page breaks, deleting, fonts, alignment, margins, column widths, etc. |
 
-## When to Modify the Document
-When you decide to modify the document, include a JSON code block with instructions at the END of your response:
+## Rules
+1. ALWAYS call \`read_document\` first if you haven't seen the document yet.
+2. NEVER output markdown tables — use \`insert_table\`.
+3. NEVER modify cell content to change table width — use \`execute_word_js\` to set table.width or autoFitWindow().
+4. For text creation, prefer \`batch_write\` (handles multiple paragraphs in one call).
+5. For ANY formatting/layout/structural operation, use \`execute_word_js\`. It runs inside Word.run().
+6. Respond in the same language the user uses. Be concise.
 
-\`\`\`json
-[
-  {"type": "table_cell", "tableIndex": 0, "row": 1, "col": 2, "value": "100억"},
-  {"type": "replace", "searchText": "placeholder", "value": "actual content"},
-  {"type": "insert_after_paragraph", "paragraphIndex": 3, "value": "New text", "style": "Normal"},
-  {"type": "paragraph", "value": "Appended text"}
-]
-\`\`\`
+## execute_word_js Examples
+Table width: \`const t = context.document.body.tables; t.load("items"); await context.sync(); t.items[0].width = 300;\`
+Delete paragraph: \`const p = context.document.body.paragraphs; p.load("items"); await context.sync(); p.items[5].delete();\`
+Bold text: \`const r = context.document.body.search("Title"); r.load("items"); await context.sync(); r.items[0].font.bold = true;\`
+Header: \`context.document.sections.getFirst().getHeader("Primary").insertParagraph("My Header", "Start");\`
+Page break: \`context.document.body.insertBreak(Word.BreakType.page, Word.InsertLocation.end);\`
+Autofit table: \`const t = context.document.body.tables; t.load("items"); await context.sync(); t.items[0].autoFitWindow();\`
 
-## Instruction Types
-- **table_cell**: Write to a specific cell (0-based tableIndex, row, col)
-- **replace**: Find and replace text in the document
-- **insert_after_paragraph**: Insert a new paragraph after a specific paragraph (0-based index), optionally with a style
-- **paragraph**: Append a new paragraph at the end of the document
-
-## Important Rules
-- ALWAYS explain what you're doing in natural language BEFORE the JSON block
-- If you don't need to modify the document (e.g., answering a question), just respond normally WITHOUT a JSON block
-- Analyze the document structure carefully — understand which row/column corresponds to what data
-- Preserve existing formatting and structure — only fill in or replace content
-- If the user's data doesn't clearly map to the template, ask questions instead of guessing
-- Respond in the same language the user uses`;
+ALWAYS load("items") and await context.sync() before accessing .items[].`;
 
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
@@ -51,67 +46,129 @@ export function App() {
 
   const handleClear = useCallback(() => {
     conversationHistory.current = [];
+    clearUndoStack();
+  }, []);
+
+  const handleUndo = useCallback(async (): Promise<string> => {
+    try {
+      return await undoLastOperation();
+    } catch (err: any) {
+      return `Undo failed: ${err.message}`;
+    }
   }, []);
 
   const handleSend = useCallback(
     (
       userMessage: string,
       onToken: (token: string) => void,
-      onDone: (fullResponse: string) => void,
-      onError: (error: Error) => void
+      onDone: (fullResponse: string, thinking?: string, steps?: AgentStep[]) => void,
+      onError: (error: Error) => void,
+      onStepUpdate: (steps: AgentStep[]) => void
     ) => {
       (async () => {
-        // Read current document structure
-        let docStructure = "";
-        try {
-          docStructure = await readDocumentStructure();
-        } catch {
-          docStructure = "(Could not read document — running outside Word)";
-        }
-
-        // Build message with document context
-        const userContent = `## Current Document Structure:\n${docStructure}\n\n## User Message:\n${userMessage}`;
-
-        // Add user message to history
         conversationHistory.current.push({
           role: "user",
-          content: userContent,
+          content: userMessage,
         });
 
-        // Build messages array: system + conversation history
         const messages: ChatMessage[] = [
           { role: "system", content: SYSTEM_PROMPT },
           ...conversationHistory.current,
         ];
 
+        const allSteps: AgentStep[] = [];
+        let finalContent = "";
+        let loopCount = 0;
+
         try {
-          const fullResponse = await sendChatStreamRequest(messages, onToken);
+          // Agent loop: keep calling AI until no more tool calls
+          while (loopCount < MAX_AGENT_LOOPS) {
+            loopCount++;
 
-          // Add assistant response to history (store clean version without doc structure noise)
-          conversationHistory.current.push({
-            role: "assistant",
-            content: fullResponse,
-          });
-
-          // Try to apply document modifications
-          try {
-            const didModify = await applyAIResponse(fullResponse);
-            if (didModify) {
-              const displayResponse = fullResponse
-                .replace(/```json[\s\S]*?```/g, "")
-                .trim();
-              onDone(displayResponse + "\n\n✅ Document updated.");
-              return;
-            }
-          } catch (err: any) {
-            onDone(
-              fullResponse +
-                `\n\n⚠️ Could not apply changes: ${err.message}`
+            const result = await sendChatStreamRequest(
+              messages,
+              onToken,
+              TOOL_DEFINITIONS
             );
-            return;
+
+            if (result.content) {
+              finalContent += result.content;
+            }
+
+            // No tool calls — we're done
+            if (!result.toolCalls || result.toolCalls.length === 0) {
+              break;
+            }
+
+            // Add assistant message with tool calls to history
+            const assistantMsg: ChatMessage = {
+              role: "assistant",
+              content: result.content || null,
+              tool_calls: result.toolCalls,
+            };
+            messages.push(assistantMsg);
+            conversationHistory.current.push(assistantMsg);
+
+            // Execute each tool call
+            for (const tc of result.toolCalls) {
+              const step: AgentStep = {
+                toolName: tc.function.name,
+                toolCallId: tc.id,
+                args: {},
+                result: "",
+                status: "running",
+              };
+
+              try {
+                step.args = JSON.parse(tc.function.arguments);
+              } catch {
+                step.args = { raw: tc.function.arguments };
+              }
+
+              allSteps.push(step);
+              onStepUpdate([...allSteps]);
+
+              try {
+                const toolResult = await executeTool(tc.function.name, step.args);
+                step.result = toolResult.result;
+                step.status = "done";
+              } catch (err: any) {
+                step.result = `Error: ${err.message}`;
+                step.status = "error";
+              }
+
+              onStepUpdate([...allSteps]);
+
+              // Add tool result to messages
+              const toolMsg: ChatMessage = {
+                role: "tool",
+                content: step.result,
+                tool_call_id: tc.id,
+              };
+              messages.push(toolMsg);
+              conversationHistory.current.push(toolMsg);
+            }
+
+            // Clear streaming content for next round
+            onToken("\n");
           }
 
-          onDone(fullResponse);
+          // Add final assistant content to history
+          if (finalContent) {
+            conversationHistory.current.push({
+              role: "assistant",
+              content: finalContent,
+            });
+          }
+
+          // Clean up any thinking tags if model outputs them (optional)
+          const displayContent = finalContent
+            .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+            .trim();
+          // No longer rely on <thinking> tags for UI — steps are the visible process
+          const thinking = undefined;
+
+          onDone(displayContent, thinking, allSteps.length > 0 ? allSteps : undefined);
         } catch (err: any) {
           onError(err);
         }
@@ -144,7 +201,7 @@ export function App() {
       </header>
       <main className="app-content">
         {activeTab === "chat" ? (
-          <ChatPanel onSend={handleSend} onClear={handleClear} />
+          <ChatPanel onSend={handleSend} onClear={handleClear} onUndo={handleUndo} />
         ) : (
           <SettingsPanel />
         )}

@@ -1,6 +1,14 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Message, MessageBubble } from "./MessageBubble";
 
+export interface AgentStep {
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, any>;
+  result: string;
+  status: "running" | "done" | "error";
+}
+
 interface Command {
   name: string;
   description: string;
@@ -11,15 +19,58 @@ interface ChatPanelProps {
   onSend: (
     userMessage: string,
     onToken: (token: string) => void,
-    onDone: (fullResponse: string) => void,
-    onError: (error: Error) => void
+    onDone: (fullResponse: string, thinking?: string, steps?: AgentStep[]) => void,
+    onError: (error: Error) => void,
+    onStepUpdate: (steps: AgentStep[]) => void
   ) => void;
   onClear: () => void;
+  onUndo: () => Promise<string>;
 }
 
-export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
+const TOOL_LABELS: Record<string, string> = {
+  read_document: "📄 Reading document",
+  batch_write: "📝 Writing content",
+  replace_text: "🔄 Replacing text",
+  insert_table: "📊 Creating table",
+  write_table_cells: "✏️ Editing table cells",
+  clear_document: "🧹 Clearing document",
+  insert_ooxml: "📄 Inserting formatted content",
+  execute_word_js: "🔧 Executing Word API",
+};
+
+function StepCard({ step }: { step: AgentStep }) {
+  const label = TOOL_LABELS[step.toolName] || step.toolName;
+  const icon =
+    step.status === "running" ? "⏳" : step.status === "done" ? "✓" : "✗";
+  const statusClass = `step-status-${step.status}`;
+
+  let detail = "";
+  if (step.toolName === "write_table_cells" && step.args.changes) {
+    detail = `(${step.args.changes.length} cells)`;
+  } else if (step.toolName === "replace_text") {
+    detail = `"${step.args.searchText}"`;
+  } else if (step.toolName === "execute_word_js" && step.args.description) {
+    detail = `— ${step.args.description}`;
+  } else if (step.toolName === "batch_write" && step.args.paragraphs) {
+    detail = `(${step.args.paragraphs.length} paragraphs)`;
+  } else if (step.toolName === "insert_ooxml" && step.args.description) {
+    detail = `— ${step.args.description}`;
+  }
+
+  return (
+    <div className={`step-card ${statusClass}`}>
+      <span className="step-icon">{icon}</span>
+      <span className="step-label">
+        {label} {detail}
+      </span>
+    </div>
+  );
+}
+
+export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
+  const [currentSteps, setCurrentSteps] = useState<AgentStep[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
@@ -35,9 +86,15 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
       action: () => {
         setMessages([]);
         setStreamingContent("");
+        setCurrentSteps([]);
         onClear();
         return null;
       },
+    },
+    {
+      name: "/undo",
+      description: "Undo last document modification",
+      action: () => "__CMD_UNDO__",
     },
     {
       name: "/summary",
@@ -57,7 +114,7 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent, loading]);
+  }, [messages, streamingContent, loading, currentSteps]);
 
   useEffect(() => {
     setSelectedCommandIndex(0);
@@ -87,30 +144,38 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
     (text: string) => {
       setLoading(true);
       setStreamingContent("");
+      setCurrentSteps([]);
 
       onSend(
         text,
-        // onToken
         (token) => {
           setStreamingContent((prev) => prev + token);
         },
-        // onDone
-        (fullResponse) => {
+        (fullResponse, thinking, steps) => {
           setStreamingContent("");
+          setCurrentSteps([]);
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: fullResponse },
+            {
+              role: "assistant",
+              content: fullResponse,
+              thinking,
+              steps,
+            },
           ]);
           setLoading(false);
         },
-        // onError
         (error) => {
           setStreamingContent("");
+          setCurrentSteps([]);
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: `Error: ${error.message}` },
           ]);
           setLoading(false);
+        },
+        (steps) => {
+          setCurrentSteps([...steps]);
         }
       );
     },
@@ -125,15 +190,15 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
     const result = cmd.action();
     if (result === null) return;
 
-    const commandMessages: Record<string, string> = {
-      "__CMD_SUMMARY__":
-        "Read the current document and provide a concise summary of its content.",
-      "__CMD_HELP__": "__HELP__",
-    };
+    if (result === "__CMD_UNDO__") {
+      setMessages((prev) => [...prev, { role: "user", content: "/undo" }]);
+      onUndo().then((msg) => {
+        setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
+      });
+      return;
+    }
 
-    const aiMessage = commandMessages[result];
-
-    if (aiMessage === "__HELP__") {
+    if (result === "__CMD_HELP__") {
       const helpText = commands
         .map((c) => `${c.name}  —  ${c.description}`)
         .join("\n");
@@ -147,8 +212,16 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
       return;
     }
 
-    setMessages((prev) => [...prev, { role: "user", content: cmd.name }]);
-    sendMessage(aiMessage);
+    const commandMessages: Record<string, string> = {
+      "__CMD_SUMMARY__":
+        "Read the current document and provide a concise summary of its content.",
+    };
+
+    const aiMessage = commandMessages[result];
+    if (aiMessage) {
+      setMessages((prev) => [...prev, { role: "user", content: cmd.name }]);
+      sendMessage(aiMessage);
+    }
   };
 
   const handleSend = async () => {
@@ -205,6 +278,17 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
     }
   };
 
+  // Clean streaming content of any thinking tags
+  const displayStreamingContent = streamingContent
+    .replace(/<thinking>[\s\S]*?<\/thinking>/g, "")
+    .replace(/<thinking>[\s\S]*/g, "")
+    .trim();
+
+  // Show status based on actual agent state
+  const isWaitingForAI = loading && !streamingContent && currentSteps.length === 0;
+  const isExecutingTools = loading && currentSteps.length > 0 && currentSteps.some(s => s.status === "running");
+  const isProcessingNextStep = loading && !streamingContent && currentSteps.length > 0 && !currentSteps.some(s => s.status === "running");
+
   return (
     <div className="chat-panel">
       {messages.length === 0 && !loading && !streamingContent ? (
@@ -223,20 +307,38 @@ export function ChatPanel({ onSend, onClear }: ChatPanelProps) {
           {messages.map((msg, i) => (
             <MessageBubble key={i} {...msg} />
           ))}
-          {streamingContent && (
+
+          {/* Active step cards */}
+          {currentSteps.length > 0 && (
+            <div className="steps-container">
+              {currentSteps.map((step, i) => (
+                <StepCard key={i} step={step} />
+              ))}
+            </div>
+          )}
+
+          {/* Streaming text content */}
+          {displayStreamingContent && (
             <div className="message assistant">
               <div className="message-role">AI Assistant</div>
               <div className="message-content">
-                {streamingContent}
+                {displayStreamingContent}
                 <span className="streaming-cursor" />
               </div>
             </div>
           )}
-          {loading && !streamingContent && (
-            <div className="loading-indicator">
-              <div className="dot" />
-              <div className="dot" />
-              <div className="dot" />
+
+          {/* Status indicators based on agent state */}
+          {isWaitingForAI && (
+            <div className="thinking-indicator">
+              <span className="thinking-spinner" />
+              <span>요청을 분석하고 있습니다...</span>
+            </div>
+          )}
+          {isProcessingNextStep && (
+            <div className="thinking-indicator">
+              <span className="thinking-spinner" />
+              <span>다음 단계를 계획하고 있습니다...</span>
             </div>
           )}
           <div ref={messagesEndRef} />
