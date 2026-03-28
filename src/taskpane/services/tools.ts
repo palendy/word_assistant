@@ -331,7 +331,7 @@ async function executeReplaceText(
     await context.sync();
 
     if (results.items.length === 0) {
-      return { result: `Text "${searchText}" not found in document` };
+      return { result: `Text "${searchText}" not found in document body. Note: search only covers body text, not tables or headers/footers. Try read_document to verify the exact text.` };
     }
 
     const count = replaceAll ? results.items.length : 1;
@@ -395,14 +395,21 @@ async function executeWriteTableCells(
 
     const undoChanges: UndoEntry["changes"] = [];
     let appliedCount = 0;
+    const skipped: string[] = [];
 
     for (const change of changes) {
-      if (change.tableIndex >= tables.items.length) continue;
+      if (change.tableIndex >= tables.items.length) {
+        skipped.push(`Table ${change.tableIndex} does not exist (only ${tables.items.length} tables)`);
+        continue;
+      }
       const table = tables.items[change.tableIndex];
       table.load("rowCount,values");
       await context.sync();
 
-      if (change.row >= table.rowCount) continue;
+      if (change.row >= table.rowCount) {
+        skipped.push(`Table ${change.tableIndex + 1} row ${change.row} out of range (max: ${table.rowCount - 1})`);
+        continue;
+      }
       const oldValue = table.values[change.row]?.[change.col] || "";
 
       const cell = table.getCell(change.row, change.col);
@@ -420,7 +427,8 @@ async function executeWriteTableCells(
     await context.sync();
 
     const entry = pushUndo(`Modified ${appliedCount} table cell(s)`, undoChanges);
-    return { result: `Wrote ${appliedCount} cell(s)`, undoEntry: entry };
+    const skippedMsg = skipped.length > 0 ? ` Skipped: ${skipped.join("; ")}` : "";
+    return { result: `Wrote ${appliedCount} cell(s).${skippedMsg}`, undoEntry: entry };
   });
 }
 
@@ -447,10 +455,31 @@ async function executeInsertOoxml(
   });
 }
 
+// Forbidden patterns in execute_word_js to prevent code injection
+const FORBIDDEN_PATTERNS = [
+  /\beval\s*\(/,
+  /\bimport\s*\(/,
+  /\brequire\s*\(/,
+  /\bfetch\s*\(/,
+  /\bXMLHttpRequest\b/,
+  /\blocalStorage\b/,
+  /\bsessionStorage\b/,
+  /\bdocument\.(cookie|write|location)/,
+  /\bwindow\.(open|location)/,
+  /\bnew\s+Worker\b/,
+];
+
 async function executeWordJs(
   code: string,
   description: string
 ): Promise<{ result: string; undoEntry?: UndoEntry }> {
+  // Validate code before execution
+  for (const pattern of FORBIDDEN_PATTERNS) {
+    if (pattern.test(code)) {
+      return { result: `Error: Code contains forbidden pattern (${pattern.source}). Only Word API operations are allowed.` };
+    }
+  }
+
   try {
     const result = await Word.run(async (context) => {
       const fn = new Function(

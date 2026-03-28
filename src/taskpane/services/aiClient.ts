@@ -55,15 +55,26 @@ export async function sendChatStreamRequest(
     body.tools = tools;
   }
 
+  const FETCH_TIMEOUT = 60000; // 60 second timeout per request
+
   // Retry loop for transient errors (429, 500, 502, 503, 504)
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+      let response: Response;
+      try {
+        response = await fetch(apiUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
