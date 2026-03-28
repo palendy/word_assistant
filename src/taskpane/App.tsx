@@ -4,6 +4,17 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ChatMessage, sendChatStreamRequest } from "./services/aiClient";
 import { TOOL_DEFINITIONS, executeTool, undoLastOperation, clearUndoStack } from "./services/tools";
 
+export interface PlanStep {
+  step_number: number;
+  action: string;
+  detail?: string;
+}
+
+export interface ProposedPlan {
+  summary: string;
+  steps: PlanStep[];
+}
+
 type Tab = "chat" | "settings";
 
 const MAX_AGENT_LOOPS = 10;
@@ -56,7 +67,29 @@ Common operations:
 - Footer: \`context.document.sections.getFirst().getFooter("Primary").insertParagraph("Footer", "Start");\`
 - Page break: \`context.document.body.insertBreak(Word.BreakType.page, Word.InsertLocation.end);\`
 - Cell background: \`table.getCell(0,0).shadingColor = "#4472C4";\`
-- Column width: \`table.getColumn(0).preferredWidth = 100;\``;
+- Column width: \`table.getColumn(0).preferredWidth = 100;\`
+
+## When to Use propose_plan
+
+Call **propose_plan BEFORE doing anything** when the request is complex:
+- Multi-step restructuring (reorder sections, reformat the whole document)
+- Writing long content (full reports, multiple sections, 5+ paragraphs)
+- Cascading changes that touch many parts of the document
+- Anything that could significantly alter the document structure
+
+Call tools directly (NO propose_plan) for simple requests:
+- Edit a cell → write_table_cells directly
+- Replace text → replace_text directly
+- Add one paragraph → batch_write directly
+- Read the document → read_document directly
+- Any clearly single-tool operation
+
+When you call propose_plan:
+1. List steps in execution order — what you will actually DO, not implementation details
+2. Keep each action under 10 words (e.g. "Create title paragraph", "Insert 5-row table")
+3. WAIT for approval — do not call any other tool in the same turn
+4. After approval: execute step-by-step exactly as listed
+5. After cancellation: acknowledge and stop`;
 
 // Rough token estimate for conversation pruning
 const MAX_HISTORY_CHARS = 100000; // ~25k tokens
@@ -105,7 +138,8 @@ export function App() {
       onToken: (token: string) => void,
       onDone: (fullResponse: string, thinking?: string, steps?: AgentStep[]) => void,
       onError: (error: Error) => void,
-      onStepUpdate: (steps: AgentStep[]) => void
+      onStepUpdate: (steps: AgentStep[]) => void,
+      onPlanProposed: (plan: ProposedPlan) => Promise<boolean>
     ) => {
       (async () => {
         conversationHistory.current.push({
@@ -123,6 +157,7 @@ export function App() {
         const allSteps: AgentStep[] = [];
         let finalContent = "";
         let loopCount = 0;
+        let planWasCancelled = false;
 
         try {
           // Agent loop: keep calling AI until no more tool calls
@@ -155,6 +190,34 @@ export function App() {
 
             // Execute each tool call
             for (const tc of result.toolCalls) {
+              // Intercept propose_plan before executeTool
+              if (tc.function.name === "propose_plan") {
+                let planArgs: ProposedPlan;
+                try {
+                  planArgs = JSON.parse(tc.function.arguments);
+                } catch {
+                  planArgs = { summary: "계획을 파싱할 수 없습니다.", steps: [] };
+                }
+
+                const approved = await onPlanProposed(planArgs);
+
+                const toolMsg: ChatMessage = {
+                  role: "tool",
+                  content: approved
+                    ? "Plan approved by user. Proceed with execution step by step."
+                    : "Plan cancelled by user. Do not proceed with any document changes.",
+                  tool_call_id: tc.id,
+                };
+                messages.push(toolMsg);
+                conversationHistory.current.push(toolMsg);
+
+                if (!approved) {
+                  planWasCancelled = true;
+                  break;
+                }
+                continue;
+              }
+
               const step: AgentStep = {
                 toolName: tc.function.name,
                 toolCallId: tc.id,
@@ -192,6 +255,8 @@ export function App() {
               messages.push(toolMsg);
               conversationHistory.current.push(toolMsg);
             }
+
+            if (planWasCancelled) break;
 
             // Clear streaming content for next round
             onToken("\n");

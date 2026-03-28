@@ -166,6 +166,44 @@ export const TOOL_DEFINITIONS = [
     },
   },
 
+  // === PLAN FIRST ===
+  {
+    type: "function" as const,
+    function: {
+      name: "propose_plan",
+      description:
+        "Propose a step-by-step plan to the user BEFORE executing any document changes. Use this when the request is complex (multi-step, full document restructuring, writing long content, cascading changes). The user must approve before you proceed. Do NOT use for simple single-tool operations.",
+      parameters: {
+        type: "object",
+        properties: {
+          summary: {
+            type: "string",
+            description: "One sentence describing the overall goal",
+          },
+          steps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                step_number: { type: "number" },
+                action: {
+                  type: "string",
+                  description: "Short verb phrase describing this step (under 10 words)",
+                },
+                detail: {
+                  type: "string",
+                  description: "Optional longer explanation of what this step does",
+                },
+              },
+              required: ["step_number", "action"],
+            },
+          },
+        },
+        required: ["summary", "steps"],
+      },
+    },
+  },
+
   // === DYNAMIC CODE EXECUTION (covers ALL Word operations) ===
   {
     type: "function" as const,
@@ -268,6 +306,9 @@ export async function executeTool(
         return executeInsertOoxml(args.ooxml, args.description);
       case "execute_word_js":
         return executeWordJs(args.code, args.description);
+      case "propose_plan":
+        // Handled in the agent loop before reaching here; this is a fallback.
+        return { result: "Plan proposed." };
       default:
         return { result: `Unknown tool: ${name}` };
     }

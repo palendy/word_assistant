@@ -629,3 +629,124 @@ body {
 .step-dot.running {
   background: #D97706;
 }
+
+/* ===== PLAN CARD ===== */
+.plan-card {
+  background: #FFFBF0;
+  border: 1.5px solid #D97706;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 8px 0;
+  animation: fadeIn 0.2s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.plan-card-icon {
+  font-size: 14px;
+}
+
+.plan-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #B45309;
+}
+
+.plan-card-summary {
+  font-size: 13px;
+  color: #5A4F46;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.plan-steps-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px 0;
+  padding: 0;
+}
+
+.plan-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.plan-step-number {
+  min-width: 22px;
+  height: 22px;
+  background: #D97706;
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.plan-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plan-step-action {
+  font-size: 13px;
+  font-weight: 500;
+  color: #2D2B2A;
+}
+
+.plan-step-detail {
+  font-size: 11px;
+  color: #8B7E74;
+  line-height: 1.4;
+}
+
+.plan-card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.plan-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.plan-btn-cancel {
+  background: #F5F0EB;
+  color: #8B7E74;
+  border: 1px solid #E8E0D8;
+}
+
+.plan-btn-cancel:hover {
+  background: #E8E0D8;
+  color: #5A4F46;
+}
+
+.plan-btn-approve {
+  background: #D97706;
+  color: white;
+}
+
+.plan-btn-approve:hover {
+  background: #B45309;
+}

@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Message, MessageBubble } from "./MessageBubble";
+import { PlanCard } from "./PlanCard";
+import { ProposedPlan } from "../App";
 
 export interface AgentStep {
   toolName: string;
@@ -21,7 +23,8 @@ interface ChatPanelProps {
     onToken: (token: string) => void,
     onDone: (fullResponse: string, thinking?: string, steps?: AgentStep[]) => void,
     onError: (error: Error) => void,
-    onStepUpdate: (steps: AgentStep[]) => void
+    onStepUpdate: (steps: AgentStep[]) => void,
+    onPlanProposed: (plan: ProposedPlan) => Promise<boolean>
   ) => void;
   onClear: () => void;
   onUndo: () => Promise<string>;
@@ -36,6 +39,7 @@ const TOOL_LABELS: Record<string, string> = {
   clear_document: "🧹 Clearing document",
   insert_ooxml: "📄 Inserting formatted content",
   execute_word_js: "🔧 Executing Word API",
+  propose_plan: "📋 Proposing plan",
 };
 
 function StepCard({ step }: { step: AgentStep }) {
@@ -76,8 +80,29 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
   const [showCommands, setShowCommands] = useState(false);
   const [commandFilter, setCommandFilter] = useState("");
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [pendingPlan, setPendingPlan] = useState<ProposedPlan | null>(null);
+  const planResolverRef = useRef<((approved: boolean) => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handlePlanProposed = useCallback((plan: ProposedPlan): Promise<boolean> => {
+    return new Promise((resolve) => {
+      planResolverRef.current = resolve;
+      setPendingPlan(plan);
+    });
+  }, []);
+
+  const handlePlanApprove = useCallback(() => {
+    setPendingPlan(null);
+    planResolverRef.current?.(true);
+    planResolverRef.current = null;
+  }, []);
+
+  const handlePlanCancel = useCallback(() => {
+    setPendingPlan(null);
+    planResolverRef.current?.(false);
+    planResolverRef.current = null;
+  }, []);
 
   const commands: Command[] = [
     {
@@ -154,6 +179,7 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
         (fullResponse, thinking, steps) => {
           setStreamingContent("");
           setCurrentSteps([]);
+          setPendingPlan(null);
           setMessages((prev) => [
             ...prev,
             {
@@ -168,6 +194,7 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
         (error) => {
           setStreamingContent("");
           setCurrentSteps([]);
+          setPendingPlan(null);
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: `Error: ${error.message}` },
@@ -176,7 +203,8 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
         },
         (steps) => {
           setCurrentSteps([...steps]);
-        }
+        },
+        handlePlanProposed
       );
     },
     [onSend]
@@ -285,9 +313,8 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
     .trim();
 
   // Show status based on actual agent state
-  const isWaitingForAI = loading && !streamingContent && currentSteps.length === 0;
-  const isExecutingTools = loading && currentSteps.length > 0 && currentSteps.some(s => s.status === "running");
-  const isProcessingNextStep = loading && !streamingContent && currentSteps.length > 0 && !currentSteps.some(s => s.status === "running");
+  const isWaitingForAI = loading && !streamingContent && currentSteps.length === 0 && !pendingPlan;
+  const isProcessingNextStep = loading && !streamingContent && currentSteps.length > 0 && !currentSteps.some(s => s.status === "running") && !pendingPlan;
 
   return (
     <div className="chat-panel">
@@ -315,6 +342,15 @@ export function ChatPanel({ onSend, onClear, onUndo }: ChatPanelProps) {
                 <StepCard key={i} step={step} />
               ))}
             </div>
+          )}
+
+          {/* Plan approval card — pauses agent loop */}
+          {pendingPlan && (
+            <PlanCard
+              plan={pendingPlan}
+              onApprove={handlePlanApprove}
+              onCancel={handlePlanCancel}
+            />
           )}
 
           {/* Streaming text content */}
